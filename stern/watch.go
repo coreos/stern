@@ -95,6 +95,14 @@ func Watch(ctx context.Context, i v1.PodInterface, podFilter *regexp.Regexp, con
 								Container: c.Name,
 							}
 						}
+
+						if c.State.Terminated != nil {
+							removed <- &Target{
+								Namespace: pod.Namespace,
+								Pod:       pod.Name,
+								Container: c.Name,
+							}
+						}
 					}
 				case watch.Deleted:
 					for _, container := range pod.Spec.Containers {
