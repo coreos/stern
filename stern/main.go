@@ -43,7 +43,7 @@ func Run(ctx context.Context, config *Config) error {
 		}
 	}
 
-	added, removed, err := Watch(ctx, clientset.Core().Pods(namespace), config.PodQuery, config.ContainerQuery, config.LabelSelector)
+	added, removed, terminated, err := Watch(ctx, clientset.Core().Pods(namespace), config.PodQuery, config.ContainerQuery, config.LabelSelector)
 	if err != nil {
 		return errors.Wrap(err, "failed to set up watch")
 	}
@@ -51,33 +51,57 @@ func Run(ctx context.Context, config *Config) error {
 	tails := make(map[string]*Tail)
 
 	go func() {
-		for p := range added {
-			id := p.GetID()
-			if tails[id] != nil {
-				continue
+		for {
+			select {
+			case p, ok := <-added:
+				if !ok {
+					return
+				}
+
+				id := p.GetID()
+				if _, exists := tails[id]; exists {
+					continue
+				}
+
+				tail := NewTail(p.Namespace, p.Pod, p.Container, &TailOptions{
+					Timestamps:   config.Timestamps,
+					SinceSeconds: int64(config.Since.Seconds()),
+					Exclude:      config.Exclude,
+					Namespace:    config.AllNamespaces,
+					TailLines:    config.TailLines,
+				})
+				tails[id] = tail
+				tail.Start(ctx, clientset.Core().Pods(p.Namespace))
+			case p, ok := <-terminated:
+				if !ok {
+					return
+				}
+				id := p.GetID()
+				if _, exists := tails[id]; exists {
+					continue
+				}
+
+				tail := NewTail(p.Namespace, p.Pod, p.Container, &TailOptions{
+					NoFollow:     true,
+					Previous:     true,
+					Timestamps:   config.Timestamps,
+					SinceSeconds: int64(config.Since.Seconds()),
+					Exclude:      config.Exclude,
+					Namespace:    config.AllNamespaces,
+					TailLines:    config.TailLines,
+				})
+				tails[id] = tail
+				tail.Start(ctx, clientset.Core().Pods(p.Namespace))
+			case p, ok := <-removed:
+				if !ok {
+					return
+				}
+				id := p.GetID()
+				if tail, ok := tails[id]; ok {
+					tail.Close()
+					delete(tails, id)
+				}
 			}
-
-			tail := NewTail(p.Namespace, p.Pod, p.Container, &TailOptions{
-				Timestamps:   config.Timestamps,
-				SinceSeconds: int64(config.Since.Seconds()),
-				Exclude:      config.Exclude,
-				Namespace:    config.AllNamespaces,
-				TailLines:    config.TailLines,
-			})
-			tails[id] = tail
-
-			tail.Start(ctx, clientset.Core().Pods(p.Namespace))
-		}
-	}()
-
-	go func() {
-		for p := range removed {
-			id := p.GetID()
-			if tails[id] == nil {
-				continue
-			}
-			tails[id].Close()
-			delete(tails, id)
 		}
 	}()
 

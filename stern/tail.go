@@ -40,11 +40,13 @@ type Tail struct {
 }
 
 type TailOptions struct {
+	NoFollow     bool
 	Timestamps   bool
 	SinceSeconds int64
 	Exclude      []*regexp.Regexp
 	Namespace    bool
 	TailLines    *int64
+	Previous     bool
 }
 
 // NewTail returns a new tail for a Kubernetes container inside a pod
@@ -93,11 +95,12 @@ func (t *Tail) Start(ctx context.Context, i v1.PodInterface) {
 		}
 
 		req := i.GetLogs(t.PodName, &corev1.PodLogOptions{
-			Follow:       true,
+			Follow:       !t.Options.NoFollow,
 			Timestamps:   t.Options.Timestamps,
 			Container:    t.ContainerName,
 			SinceSeconds: &t.Options.SinceSeconds,
 			TailLines:    t.Options.TailLines,
+			Previous:     t.Options.Previous,
 		})
 
 		stream, err := req.Stream()
